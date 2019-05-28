@@ -1,0 +1,397 @@
+---
+title: "STATS 415 Project Appendix"
+author: "Ailun Huang, Judiah Lin, Raymond Pang"
+date: "4/23/2019"
+output: html_document
+---
+
+# Appendix I: External Requirements
+
+Reading in the dataset and appropriate packages to analyze data:
+
+```{r message=FALSE, warning=FALSE}
+suicide <- read.csv("/Users/Raymond/Desktop/Stats\ 415/master.csv")
+library(tidyverse)
+library(ggplot2)
+library(knitr)
+library(SignifReg)
+library(leaps)
+library(boot)
+library(knitr)
+library(splines)
+library(gam)
+```
+
+## Overview
+
+This is the appendix for the STATS 415 Final Project. Our goal is to look at various methods and concepts taught from class to answer a question that is of interest to us. The following is the data set and the link of where we found it:
+
+**Data set**: Suicide Rates Overview 1985 to 2016  
+**Link**: https://www.kaggle.com/russellyates88/suicide-rates-overview-1985-to-2016
+
+We are particularly interested in suicide data because we believe it is a prominent issue all over the world. Because the data set contains 27,400 rows, we will only look at a subsection of the data. We are particularly interested in the United States, so we will only be using rows of data pertaining to the U.S. We are hoping to predict the percentages of suicide with various factors such as year, sex, age group, number of suicides, population, and GDP per capita. The goal of this project is to see how accurately we can predict suicide rates using a data method taught in class. If we are able to predict this accurately, we can make conclusions for certain sex and/or age group. We can advise the American Suicide Prevention to create programs specific to those sex and/or age group in hopes of lowering suicide rates. 
+
+\newpage 
+
+# Appendix II: Exploratory Data
+
+Modifying the data set to fit the needs of our research question:
+
+```{r}
+# Filtering to only the United States and selecting variables of interest. 
+# Also created a new variable called suicide_perc.
+onlyUS = suicide %>% filter(country == "United States") %>%
+  select(year, sex, age, suicides_no, 
+         population, gdp_per_capita....) %>% 
+  mutate(suicide_perc = (suicides_no / population) * 100)
+
+# Ordering the age group
+onlyUS$age <- factor(onlyUS$age,
+  levels =  c('5-14 years', '15-24 years', '25-34 years', 
+              '35-54 years', '55-74 years', '75+ years'), 
+  ordered = TRUE)
+
+# Boxplot of Sex vs. Suicide Percentages
+ggplot(onlyUS, aes(x = sex, y = suicide_perc)) +
+  geom_boxplot() +
+  ylab("Suicide Percentages") +
+  ggtitle("Boxplot of Sex vs. Suicide Percentages") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Boxplot of Age Group vs. Suicide Percentages
+ggplot(onlyUS, aes(x = age, y = suicide_perc)) +
+  geom_boxplot() +
+  xlab("Age Group") +
+  ylab("Suicide Percentages") +
+  ggtitle("Boxplot of Age Group vs. Suicide Percentages") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Manipulating onlyUS with functions to create time series graph
+suicide_no_sum_by_year <- aggregate(onlyUS$suicides_no, 
+                                    by = list(Category = onlyUS$year), 
+                                    FUN = sum)
+population_sum_by_year <- aggregate(onlyUS$population, 
+                                    by = list(Category = onlyUS$year), 
+                                    FUN = sum)
+year_suicide_perc <- suicide_no_sum_by_year
+year_suicide_perc$suicide_perc <- (suicide_no_sum_by_year$x 
+                                   / population_sum_by_year$x) * 100
+year_suicide_perc$year <- suicide_no_sum_by_year$Category
+
+# Time series graph between the year and suicide rate
+ggplot(year_suicide_perc, aes(x = year, y = suicide_perc, group = 1)) + 
+  geom_line() + 
+  geom_point() +
+  ggtitle("Suicide Percentages in United States from 1985 to 2015") + 
+  ylab("Suicide Percentages") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+year_gdp_per_capita <- aggregate(onlyUS$gdp_per_capita...., 
+                                 by = list(Category = onlyUS$year), 
+                                 FUN = sum)
+year_gdp_per_capita$gdp_per_capita <- year_gdp_per_capita$x / 12
+year_gdp_per_capita$suicide_perc <- year_suicide_perc$suicide_perc
+
+# Scatterplot between GDP per-capita and suicide percentage
+ggplot(data = year_gdp_per_capita, 
+       aes(x = gdp_per_capita, y = suicide_perc, group = 1)) + 
+  geom_point() +
+  labs(title = 'GDP per-capita and Suicide Rate in US from 1985 to 2015') + 
+  xlab("GDP per-capita") +
+  ylab("Suicide Percentages") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Line graph between year and GDP per-capita
+ggplot(data = year_gdp_per_capita, aes(x = Category, y = gdp_per_capita, group = 1)) + 
+  geom_line() + 
+  geom_point() +
+  labs(title='GDP per-capita in US from 1985 to 2015') + 
+  xlab("Year") +
+  ylab("GDP per-capita") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+``` {r}
+head(onlyUS)
+```
+
+\newpage 
+
+# Appendix III: Splitting Data into Training and Testing
+
+We will split our data set of 372 rows into training and test data. We will have approximately 80% of the data as "training" and 20% of the data as "test". We will set a seed of 415.
+
+```{r}
+set.seed(415)
+
+test_size = floor(nrow(onlyUS) * 0.2)
+test_id = sample(1:nrow(onlyUS), test_size)
+
+test_suicide = onlyUS[test_id, ]
+train_suicide = onlyUS[-test_id, ]
+```
+
+\newpage 
+
+# Appendix IV: Best Subset Selection Regression
+
+## Fitting a linear model on the training set (full model):
+
+```{r}
+full = lm(log(suicide_perc) ~ ., data = train_suicide)
+summary(full)
+
+par(mfrow = c(2, 2))
+plot(full)
+
+train_mse_full = mean(full$residuals^2)
+test_mse_full = mean((log(test_suicide$suicide_perc) -
+                        predict(full, test_suicide))^2)
+```
+
+## Forward Selection and Backward Selection
+
+```{r}
+# Forward
+train_suicide_2 = train_suicide
+train_suicide_2$suicide_perc = log(train_suicide_2$suicide_perc)
+forward = SignifReg(suicide_perc ~ ., train_suicide_2, alpha = 0.05,
+                    direction = 'forward', correction = 'None', trace = FALSE)
+
+train_mse_fwd = mean(forward$residuals^2)
+test_mse_fwd = mean((log(test_suicide$suicide_perc) -
+                       predict(forward, test_suicide))^2)
+
+# Backward
+backward = SignifReg(log(suicide_perc) ~ ., train_suicide, alpha = 0.05,
+                     direction = 'backward', correction = 'None', trace = FALSE)
+
+train_mse_bwd = mean(backward$residuals^2)
+test_mse_bwd = mean((log(test_suicide$suicide_perc) -
+                       predict(backward, test_suicide))^2)
+```
+
+## AIC, BIC, Adjusted R-squared
+
+```{r}
+regfit_full = regsubsets(log(suicide_perc) ~ ., data = train_suicide,
+                         nvmax = NULL)
+regfit_summary = summary(regfit_full)
+
+# AIC
+coef(regfit_full, which.min(regfit_summary$cp))
+AIC_fit = lm(log(suicide_perc) ~ sex + age + suicides_no + population, 
+             data = train_suicide)
+summary(AIC_fit)
+
+train_mse_AIC = mean((AIC_fit$residuals)^2)
+test_mse_AIC = mean((log(test_suicide$suicide_perc) -
+                       predict(AIC_fit, test_suicide))^2)
+
+# BIC
+coef(regfit_full, which.min(regfit_summary$bic))
+BIC_fit = lm(log(suicide_perc) ~ sex + age, data = train_suicide)
+summary(BIC_fit)
+
+train_mse_BIC = mean((BIC_fit$residuals)^2)
+test_mse_BIC = mean((log(test_suicide$suicide_perc) - 
+                       predict(BIC_fit, test_suicide))^2)
+
+# Adjusted R-squared
+coef(regfit_full, which.max(regfit_summary$adjr2))
+adjr2_fit = lm(log(suicide_perc) ~ sex + age + suicides_no + population, 
+               data = train_suicide)
+summary(adjr2_fit)
+
+train_mse_adjr2 = mean((adjr2_fit$residuals)^2)
+test_mse_adjr2 = mean((log(test_suicide$suicide_perc) -
+                         predict(adjr2_fit, test_suicide))^2)
+```
+
+## Cross-Validation Error
+
+```{r}
+glm_full = glm(full)
+cv_mse_full = cv.glm(train_suicide, glm_full, K = 5)$delta[1]
+
+glm_forward = glm(forward)
+cv_mse_fwd = cv.glm(train_suicide_2, glm_forward, K = 5)$delta[1]
+
+glm_backward = glm(backward)
+cv_mse_bwd = cv.glm(train_suicide, glm_backward, K = 5)$delta[1]
+
+glm_AIC = glm(AIC_fit)
+cv_mse_aic = cv.glm(train_suicide, glm_AIC, K = 5)$delta[1]
+
+glm_BIC = glm(BIC_fit)
+cv_mse_bic = cv.glm(train_suicide, glm_BIC, K = 5)$delta[1]
+
+glm_adjr2 = glm(adjr2_fit)
+cv_mse_adjr2 = cv.glm(train_suicide, glm_adjr2, K = 5)$delta[1]
+```
+
+## Table of Errors (Linear Methods)
+
+```{r}
+models_linear = c("Full", "Forward", "Backward", "AIC", "BIC", "Adjusted-R^2")
+
+train_err_linear = c(
+  train_mse_full,
+  train_mse_fwd,
+  train_mse_bwd,
+  train_mse_AIC,
+  train_mse_BIC,
+  train_mse_adjr2
+)
+
+test_err_linear = c(
+  test_mse_full,
+  test_mse_fwd,
+  test_mse_bwd,
+  test_mse_AIC,
+  test_mse_BIC,
+  test_mse_adjr2
+)
+
+cv_err_linear = c(
+  cv_mse_full,
+  cv_mse_fwd,
+  cv_mse_bwd,
+  cv_mse_aic,
+  cv_mse_bic,
+  cv_mse_adjr2
+)
+
+results_linear = data.frame(
+  models_linear,
+  train_err_linear,
+  test_err_linear,
+  cv_err_linear
+)
+
+colnames(results_linear) = c("Methods", "Train Error", "Test Error", "CV Error")
+knitr::kable(results_linear)
+```
+
+\newpage 
+
+# Appendix V: Non-Linear Methods
+
+## Polynomial regression
+
+```{r}
+cv.error_poly = rep(0, 15)
+for(i in 1:15) {
+  fitpoly = glm(log(suicide_perc) ~ poly(gdp_per_capita...., i), data = train_suicide)
+  cv.error_poly[i] = cv.glm(train_suicide, fitpoly, K = 10)$delta[1]
+}
+
+plot(1:15, cv.error_poly, xlab = "d", ylab = "CV error", type = "l")
+which.min(cv.error_poly)
+
+fit_poly = lm(log(suicide_perc) ~ poly(gdp_per_capita...., 1), data = train_suicide)
+summary(fit_poly)
+```
+
+## Splines
+
+### Natural Splines
+
+```{r}
+cv.error_ns = rep(0, 6)
+for (i in 1:6) {
+  fitns = glm(log(suicide_perc) ~ ns(gdp_per_capita...., df = i), data = train_suicide)
+  cv.error_ns[i] = cv.glm(train_suicide, fitns, K = 10)$delta[1]
+}
+
+plot(1:6, cv.error_ns, xlab = "df", ylab = "CV error", type = "l")
+which.min(cv.error_ns)
+
+fit_ns = lm(log(suicide_perc) ~ ns(gdp_per_capita...., df = 2), data = train_suicide)
+summary(fit_ns)
+```
+
+### Smoothing Spline
+
+```{r message=FALSE, warning=FALSE}
+fit_ss = smooth.spline(x = train_suicide$gdp_per_capita...., 
+                       y = log(train_suicide$suicide_perc), cv = T)
+fit_ss
+```
+
+### GAM
+
+```{r}
+fit_gam_1 <- lm(log(suicide_perc) ~ age + ns(gdp_per_capita...., 2) + sex, data = train_suicide)
+summary(fit_gam_1)
+
+par(mfrow = c(1, 3))
+plot.Gam(fit_gam_1)
+
+fit_gam_2 <- lm(log(suicide_perc) ~ ns(gdp_per_capita...., 2) + age + sex + age * sex, 
+                data = train_suicide)
+summary(fit_gam_2)
+plot.Gam(fit_gam_2)
+```
+
+### Table of Errors (Non-Linear Methods)
+
+```{r}
+fit.poly = lm(log(suicide_perc) ~ poly(gdp_per_capita...., 1), data = train_suicide)
+train_mse_poly = mean((predict(fit.poly, train_suicide) - log(train_suicide$suicide_perc))^2)
+test_mse_poly = mean((predict(fit.poly, test_suicide) - log(test_suicide$suicide_perc))^2)
+
+fit.ns = glm(log(suicide_perc) ~ ns(gdp_per_capita...., df = 2), data = train_suicide)
+train_mse_ns = mean((predict(fit.ns, train_suicide) - log(train_suicide$suicide_perc))^2)
+test_mse_ns = mean((predict(fit.ns, test_suicide) - log(test_suicide$suicide_perc))^2)
+
+fit.ss = smooth.spline(x = train_suicide$gdp_per_capita...., 
+                       y = log(train_suicide$suicide_perc), df = 3.2)
+train_mse_ss = mean((predict(fit.ss, x = train_suicide$gdp_per_capita....)$y 
+                     - log(train_suicide$suicide_perc))^2)
+test_mse_ss = mean((predict(fit.ss, x = test_suicide$gdp_per_capita....)$y 
+                    - log(test_suicide$suicide_perc))^2)
+
+train_mse_gam_1 = mean((predict(fit_gam_1, train_suicide) - log(train_suicide$suicide_perc))^2)
+test_mse_gam_1 = mean((predict(fit_gam_1, test_suicide) - log(test_suicide$suicide_perc))^2)
+
+train_mse_gam_2 = mean((predict(fit_gam_2, train_suicide) - log(train_suicide$suicide_perc))^2)
+test_mse_gam_2 = mean((predict(fit_gam_2, test_suicide) - log(test_suicide$suicide_perc))^2)
+
+models_nonlinear = c("Polynomial", "Natural Spline", "Smoothing Spline", 
+                     "GAM (without interaction)", "GAM (with interaction)")
+
+train_err_nonlinear = c(
+  train_mse_poly,
+  train_mse_ns,
+  train_mse_ss,
+  train_mse_gam_1,
+  train_mse_gam_2
+)
+
+test_err_nonlinear = c(
+  test_mse_poly,
+  test_mse_ns,
+  test_mse_ss,
+  test_mse_gam_1,
+  test_mse_gam_2
+)
+
+cv_err_nonlinear = c(
+  round(cv.error_poly[1], 7),
+  round(cv.error_ns[2], 7),
+  round(fit_ss$cv.crit, 7),
+  "-",
+  "-"
+)
+
+results_nonlinear = data.frame(
+  models_nonlinear,
+  train_err_nonlinear,
+  test_err_nonlinear,
+  cv_err_nonlinear
+)
+
+colnames(results_nonlinear) = c("Methods", "Train Error", "Test Error", "CV Error")
+knitr::kable(results_nonlinear)
+```
